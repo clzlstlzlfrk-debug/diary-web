@@ -1471,10 +1471,13 @@
         'Content-Type': 'application/json'
       };
 
-      // 1. 현재 파일의 SHA 가져오기 (Conflict 방지를 위해 항상 실시간으로 깃허브에서 가져옴)
+      // 1. 현재 파일의 SHA 가져오기 (Conflict 방지를 위해 항상 실시간으로 깃허브에서 가져옴 - 브라우저 캐싱 방지 포함)
       let currentSha = '';
       try {
-        const getRes = await fetch(`${apiUrl}?ref=${repoConfig.branch}`, { headers });
+        const getRes = await fetch(`${apiUrl}?ref=${repoConfig.branch}&t=${Date.now()}`, { 
+          headers,
+          cache: 'no-store'
+        });
         if (getRes.ok) {
           const fileData = await getRes.json();
           currentSha = fileData.sha || '';
@@ -1542,12 +1545,13 @@
     showRepoStatus('📥 저장소에서 불러오는 중...', 'loading');
 
     try {
-      const apiUrl = `https://api.github.com/repos/${repoConfig.owner}/${repoConfig.repo}/contents/${repoConfig.path}?ref=${repoConfig.branch}`;
+      const apiUrl = `https://api.github.com/repos/${repoConfig.owner}/${repoConfig.repo}/contents/${repoConfig.path}?ref=${repoConfig.branch}&t=${Date.now()}`;
       const res = await fetch(apiUrl, {
         headers: {
           'Authorization': `token ${repoConfig.token}`,
           'Accept': 'application/vnd.github.v3+json'
-        }
+        },
+        cache: 'no-store'
       });
 
       if (!res.ok) {
