@@ -531,7 +531,7 @@
   // ==========================================================================
   // 수동 저장 전용 시스템
   // ==========================================================================
-  function saveCurrentEntry() {
+  async function saveCurrentEntry() {
     const title = diaryTitleInput.value.trim();
     const content = (() => {
       const clone = diaryContentEditor.cloneNode(true);
@@ -576,11 +576,11 @@
       updatedAt: new Date().toISOString()
     };
 
-    persistAll();
-
-    renderCalendar();
-    setSaveStatus('✨ 일기 저장 완료!', false);
     setEditMode(false);
+    renderCalendar();
+    setSaveStatus('✨ 로컬 저장 완료...', false);
+
+    await persistAll();
   }
 
   function markAsUnsaved() {
@@ -1360,9 +1360,17 @@
 
     saveToServerApi();
 
-    // GitHub 저장소 연동이 설정되어 있으면 자동으로 Push (사용자에게 알림 없이)
+    // GitHub 저장소 연동이 설정되어 있으면 자동으로 Push
     if (isRepoConfigured()) {
-      pushToRepo(false);
+      setSaveStatus('✨ 저장 완료 (📤 GitHub 동기화 중...)', false);
+      try {
+        await pushToRepo(false);
+        setSaveStatus('✨ 저장 완료 (🐙 GitHub 동기화 완료!)', false);
+      } catch (err) {
+        setSaveStatus('✨ 저장 완료 (⚠️ GitHub 동기화 실패)', true);
+      }
+    } else {
+      setSaveStatus('✨ 일기 저장 완료!', false);
     }
   }
 
@@ -1420,6 +1428,15 @@
         }
       }
     } catch (e) {}
+
+    // 4. GitHub 저장소 연동이 되어 있다면 시작 시 자동으로 최신 일기 데이터를 Pull합니다.
+    if (isRepoConfigured()) {
+      try {
+        await pullFromRepo();
+      } catch (e) {
+        console.warn('페이지 로드 시 자동 Pull 실패:', e);
+      }
+    }
   }
 
   async function saveToServerApi() {
