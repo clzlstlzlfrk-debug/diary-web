@@ -807,8 +807,8 @@
     return null;
   }
 
-  // 이미지 압축 (최대 너비 1024px, JPEG 0.7 압축)
-  function compressImage(file, maxWidth = 1024, quality = 0.7) {
+  // 이미지 압축 (최대 너비 1600px, WebP 0.85 고화질 압축)
+  function compressImage(file, maxWidth = 1600, quality = 0.85) {
     return new Promise((resolve, reject) => {
       if (!file.type.startsWith('image/')) {
         return reject(new Error('Not an image file'));
@@ -831,7 +831,7 @@
           let height = img.height;
 
           if (width > maxWidth) {
-            height = (height * maxWidth) / width;
+            height = Math.round((height * maxWidth) / width);
             width = maxWidth;
           }
 
@@ -840,8 +840,11 @@
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
 
-          // JPEG로 0.7 퀄리티 압축
-          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          // WebP 포맷 사용 (0.85 고화질), 미지원 브라우저는 JPEG 폴백
+          let dataUrl = canvas.toDataURL('image/webp', quality);
+          if (!dataUrl.startsWith('data:image/webp')) {
+            dataUrl = canvas.toDataURL('image/jpeg', quality);
+          }
           
           // 압축 결과 데이터의 크기가 원본보다 크다면 원본 base64(e.target.result)를 씁니다.
           if (dataUrl.length >= e.target.result.length) {
@@ -1467,6 +1470,18 @@
     return repoConfig.token && repoConfig.owner && repoConfig.repo;
   }
 
+  function getRepoFilePath(targetYear) {
+    const y = targetYear || (selectedDateStr ? selectedDateStr.split('-')[0] : new Date().getFullYear().toString());
+    let path = repoConfig.path || 'diary_{year}.json';
+    if (path.includes('{year}')) {
+      return path.replace(/{year}/g, y);
+    }
+    if (path === 'diary_data.json') {
+      return `diary_${y}.json`;
+    }
+    return path;
+  }
+
   // 저장소에 파일 Push (Create or Update)
   async function pushToRepo(showFeedback = true) {
     if (!isRepoConfigured()) return;
@@ -1481,7 +1496,8 @@
     if (showFeedback) showRepoStatus('📤 저장소에 업로드 중...', 'loading');
 
     try {
-      const apiUrl = `https://api.github.com/repos/${repoConfig.owner}/${repoConfig.repo}/contents/${repoConfig.path}`;
+      const targetPath = getRepoFilePath();
+      const apiUrl = `https://api.github.com/repos/${repoConfig.owner}/${repoConfig.repo}/contents/${targetPath}`;
       const headers = {
         'Authorization': `token ${repoConfig.token}`,
         'Accept': 'application/vnd.github.v3+json',
@@ -1509,7 +1525,7 @@
 
       // 3. PUT 요청으로 파일 생성 또는 업데이트
       const now = new Date();
-      const commitMsg = `📝 일기 동기화 — ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const commitMsg = `📝 일기 동기화 (${targetPath}) — ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
       const body = {
         message: commitMsg,
@@ -1561,15 +1577,25 @@
 
     showRepoStatus('📥 저장소에서 불러오는 중...', 'loading');
 
-    try {
-      const apiUrl = `https://api.github.com/repos/${repoConfig.owner}/${repoConfig.repo}/contents/${repoConfig.path}?ref=${repoConfig.branch}&t=${Date.now()}`;
-      const res = await fetch(apiUrl, {
+    const tryFetchFile = async (pathStr) => {
+      const apiUrl = `https://api.github.com/repos/${repoConfig.owner}/${repoConfig.repo}/contents/${pathStr}?ref=${repoConfig.branch}&t=${Date.now()}`;
+      return await fetch(apiUrl, {
         headers: {
           'Authorization': `token ${repoConfig.token}`,
           'Accept': 'application/vnd.github.v3+json'
         },
         cache: 'no-store'
       });
+    };
+
+    try {
+      let targetPath = getRepoFilePath();
+      let res = await tryFetchFile(targetPath);
+
+      // 만약 년도별 파일(예: diary_2026.json)이 저장소에 없으면 기존 diary_data.json 폴백 시도
+      if (!res.ok && res.status === 404 && targetPath !== 'diary_data.json') {
+        res = await tryFetchFile('diary_data.json');
+      }
 
       if (!res.ok) {
         if (res.status === 404) {
