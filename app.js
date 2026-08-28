@@ -137,6 +137,7 @@
   const fileImport = document.getElementById('fileImport');
   const btnConnectFile = document.getElementById('btnConnectFile');
   const fileConnStatusEl = document.getElementById('fileConnStatus');
+  const repoConnStatusEl = document.getElementById('repoConnStatus');
 
   // 햄버거 메뉴
   const btnHamburger = document.getElementById('btnHamburger');
@@ -168,6 +169,7 @@
     renderCalendar();
     loadEntryForDate(selectedDateStr);
     updateFileConnStatusUI();
+    updateRepoConnStatusUI();
   }
 
   function formatDate(date) {
@@ -1334,6 +1336,19 @@
     }
   }
 
+  function updateRepoConnStatusUI(errorFlag) {
+    if (!repoConnStatusEl) return;
+    if (isRepoConfigured()) {
+      repoConnStatusEl.textContent = '🐙 저장소 연결됨';
+      repoConnStatusEl.className = 'file-conn-status connected';
+      repoConnStatusEl.title = 'GitHub 저장소에 일기가 클라우드 동기화되고 있어요.';
+    } else {
+      repoConnStatusEl.textContent = errorFlag ? '⚠️ 저장소 오류' : '🐙 저장소 미연결';
+      repoConnStatusEl.className = 'file-conn-status' + (errorFlag ? ' error' : '');
+      repoConnStatusEl.title = '클릭해서 GitHub 저장소 동기화 설정을 확인해요.';
+    }
+  }
+
   // 프로필 설정 + 모든 일기 데이터를 저장하는 단일 진입점.
   // localStorage에는 항상 캐시하고, diary_data.json에 연결돼 있으면 그 파일에도 씁니다.
   async function persistAll() {
@@ -1551,9 +1566,11 @@
       repoConfig.sha = result.content?.sha || '';
 
       if (showFeedback) showRepoStatus('🐙 저장소 업로드 완료!', 'success');
+      updateRepoConnStatusUI();
     } catch (err) {
       console.error('GitHub Repo push 실패:', err);
       if (showFeedback) showRepoStatus(`실패: ${err.message}`, 'error');
+      updateRepoConnStatusUI(true);
     } finally {
       // UI 복구
       if (btnSaveRepoConfig) {
@@ -1644,9 +1661,11 @@
       renderCalendar();
       loadEntryForDate(selectedDateStr);
       showRepoStatus('🐙 저장소에서 불러오기 성공!', 'success');
+      updateRepoConnStatusUI();
     } catch (err) {
       console.error('GitHub Repo pull 실패:', err);
       showRepoStatus(`실패: ${err.message}`, 'error');
+      updateRepoConnStatusUI(true);
     } finally {
       // UI 복구
       if (btnManualRepoPull) {
@@ -2079,13 +2098,24 @@
       });
     }
 
+    if (repoConnStatusEl) {
+      repoConnStatusEl.addEventListener('click', () => {
+        repoTokenInput.value = repoConfig.token;
+        repoOwnerInput.value = repoConfig.owner;
+        repoNameInput.value = repoConfig.repo;
+        repoBranchInput.value = repoConfig.branch || 'main';
+        repoPathInput.value = repoConfig.path || 'diary_{year}.json';
+        repoModal.classList.remove('hidden');
+      });
+    }
+
     // GitHub 저장소 동기화 모달 열기
     btnRepoSync.addEventListener('click', () => {
       repoTokenInput.value = repoConfig.token;
       repoOwnerInput.value = repoConfig.owner;
       repoNameInput.value = repoConfig.repo;
       repoBranchInput.value = repoConfig.branch || 'main';
-      repoPathInput.value = repoConfig.path || 'diary_data.json';
+      repoPathInput.value = repoConfig.path || 'diary_{year}.json';
       repoModal.classList.remove('hidden');
       hamburgerDropdown.classList.add('hidden');
       btnHamburger.classList.remove('is-open');
@@ -2104,7 +2134,7 @@
       repoConfig.owner = repoOwnerInput.value.trim();
       repoConfig.repo = repoNameInput.value.trim();
       repoConfig.branch = repoBranchInput.value.trim() || 'main';
-      repoConfig.path = repoPathInput.value.trim() || 'diary_data.json';
+      repoConfig.path = repoPathInput.value.trim() || 'diary_{year}.json';
 
       localStorage.setItem('diary_repo_token', repoConfig.token);
       localStorage.setItem('diary_repo_owner', repoConfig.owner);
@@ -2112,6 +2142,7 @@
       localStorage.setItem('diary_repo_branch', repoConfig.branch);
       localStorage.setItem('diary_repo_path', repoConfig.path);
 
+      updateRepoConnStatusUI();
       pushToRepo(true);
     });
 
