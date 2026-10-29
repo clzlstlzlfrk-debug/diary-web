@@ -162,6 +162,10 @@
   // ==========================================================================
   async function init() {
     setupEventListeners();
+    initCalendarTooltip();
+    window.addEventListener('scroll', hideCalendarTooltip, { passive: true });
+    window.addEventListener('resize', hideCalendarTooltip, { passive: true });
+    window.addEventListener('blur', hideCalendarTooltip);
     await tryAutoReconnectFile();
     await loadDiaryData();
     applyProfileSettings();
@@ -228,9 +232,113 @@
   }
 
   // ==========================================================================
+  // 캘린더 호버 말풍선 툴팁 (1초 호버 시 일기 제목 표시)
+  // ==========================================================================
+  let calTooltipEl = null;
+  let calHoverTimer = null;
+
+  function initCalendarTooltip() {
+    if (calTooltipEl) return;
+    const calendarCard = document.querySelector('.calendar-card');
+    if (!calendarCard) return;
+
+    calTooltipEl = document.createElement('div');
+    calTooltipEl.id = 'calendarDayTooltip';
+    calTooltipEl.className = 'cal-day-tooltip hidden';
+    calTooltipEl.innerHTML = `
+      <div class="tooltip-content" id="calTooltipContent"></div>
+      <div class="tooltip-tail" id="calTooltipTail"></div>
+    `;
+    calendarCard.appendChild(calTooltipEl);
+  }
+
+  function hideCalendarTooltip() {
+    if (calHoverTimer) {
+      clearTimeout(calHoverTimer);
+      calHoverTimer = null;
+    }
+    if (calTooltipEl) {
+      calTooltipEl.classList.remove('visible');
+      calTooltipEl.classList.add('hidden');
+    }
+  }
+
+  function showCalendarTooltip(cell, dateStr) {
+    const entry = diaryData[dateStr];
+    if (!entry) return;
+    const hasAnyContent = (entry.title && entry.title.trim()) ||
+                          (entry.content && entry.content.trim()) ||
+                          (entry.freeImages && entry.freeImages.length > 0);
+    if (!hasAnyContent) return;
+
+    const titleText = (entry.title && entry.title.trim()) ? entry.title.trim() : '(제목 없음)';
+    const calendarCard = document.querySelector('.calendar-card');
+    if (!calendarCard) return;
+
+    if (!calTooltipEl) {
+      initCalendarTooltip();
+    }
+    if (!calTooltipEl) return;
+
+    const contentEl = document.getElementById('calTooltipContent');
+    const tailEl = document.getElementById('calTooltipTail');
+    if (!contentEl || !tailEl) return;
+
+    contentEl.innerHTML = '';
+    if (entry.mood) {
+      const emojiOnly = (entry.mood.match(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/u) || [entry.mood])[0];
+      const emojiSpan = document.createElement('span');
+      emojiSpan.className = 'cal-tip-emoji';
+      emojiSpan.textContent = emojiOnly;
+      contentEl.appendChild(emojiSpan);
+    }
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'cal-tip-title';
+    titleSpan.textContent = titleText;
+    contentEl.appendChild(titleSpan);
+
+    // 크기 측정을 위해 일시 표시
+    calTooltipEl.classList.remove('hidden');
+    calTooltipEl.classList.remove('visible');
+    calTooltipEl.style.left = '0px';
+    calTooltipEl.style.top = '0px';
+
+    const cardRect = calendarCard.getBoundingClientRect();
+    const cellRect = cell.getBoundingClientRect();
+    const tipWidth = calTooltipEl.offsetWidth;
+    const tipHeight = calTooltipEl.offsetHeight;
+
+    // 날짜 칸 가로 중앙 정렬
+    const cellCenterX = (cellRect.left + cellRect.width / 2) - cardRect.left;
+    const cellTop = cellRect.top - cardRect.top;
+
+    let targetLeft = cellCenterX - (tipWidth / 2);
+    const padding = 8;
+    const minLeft = padding;
+    const maxLeft = Math.max(minLeft, cardRect.width - tipWidth - padding);
+    const clampedLeft = Math.max(minLeft, Math.min(maxLeft, targetLeft));
+
+    // 말풍선 꼬리가 날짜 칸 중앙을 가리키도록 설정
+    const arrowX = cellCenterX - clampedLeft;
+    const clampedArrowX = Math.max(12, Math.min(tipWidth - 12, arrowX));
+    tailEl.style.left = `${clampedArrowX}px`;
+
+    // 날짜 칸 상단에 배치
+    const targetTop = cellTop - tipHeight - 7;
+    calTooltipEl.style.left = `${clampedLeft}px`;
+    calTooltipEl.style.top = `${Math.max(6, targetTop)}px`;
+
+    requestAnimationFrame(() => {
+      calTooltipEl.classList.add('visible');
+    });
+  }
+
+  // ==========================================================================
   // 캘린더 렌더링
   // ==========================================================================
   function renderCalendar() {
+    hideCalendarTooltip();
+
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
@@ -240,6 +348,10 @@
     const firstDay = new Date(year, month, 1).getDay();
     const lastDate = new Date(year, month + 1, 0).getDate();
     const prevMonthLastDate = new Date(year, month, 0).getDate();
+
+    // 6주(6행) 구성 여부 확인하여 클래스 토글 (세로 칸 밀림 방지)
+    const totalCells = firstDay + lastDate;
+    calendarGrid.classList.toggle('six-rows', totalCells > 35);
 
     for (let i = firstDay - 1; i >= 0; i--) {
       const cell = document.createElement('div');
@@ -273,8 +385,11 @@
 
       let badgeHtml = '';
       if (entry && entry.mood) {
-        const shortLabel = MOOD_LABEL_MAP[entry.mood] || '일기';
-        badgeHtml = `<div class="cal-mood-badge"><span class="b-emoji">${entry.mood}</span><span class="b-label">${shortLabel}</span></div>`;
+        // 달력에는 글씨 없이 이모지만 표시
+        const emojiOnly = (entry.mood.match(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/u) || [entry.mood])[0];
+        const shortLabel = MOOD_LABEL_MAP[emojiOnly] || MOOD_LABEL_MAP[entry.mood] || '';
+        const titleAttr = shortLabel ? `${emojiOnly} ${shortLabel}` : emojiOnly;
+        badgeHtml = `<div class="cal-mood-badge" title="${titleAttr}"><span class="b-emoji">${emojiOnly}</span></div>`;
       }
 
       cell.innerHTML = `
@@ -284,9 +399,29 @@
 
       if (!isFutureDate) {
         cell.addEventListener('click', () => {
+          hideCalendarTooltip();
           selectedDateStr = dateStr;
           renderCalendar();
           loadEntryForDate(selectedDateStr);
+        });
+
+        // 1초 호버 시 일기 제목 말풍선 툴팁 표시
+        cell.addEventListener('mouseenter', () => {
+          hideCalendarTooltip();
+          const ent = diaryData[dateStr];
+          if (!ent) return;
+          const hasAny = (ent.title && ent.title.trim()) ||
+                         (ent.content && ent.content.trim()) ||
+                         (ent.freeImages && ent.freeImages.length > 0);
+          if (!hasAny) return;
+
+          calHoverTimer = setTimeout(() => {
+            showCalendarTooltip(cell, dateStr);
+          }, 1000);
+        });
+
+        cell.addEventListener('mouseleave', () => {
+          hideCalendarTooltip();
         });
       }
 
@@ -364,12 +499,23 @@
   function renderMoodWeekdayChart(container, buckets) {
     if (!container) return;
     const weekdayLabels = ['일', '월', '화', '수', '목', '금', '토'];
-    const unit = 12; // 1건당 픽셀 높이
+    const maxBarHeight = 36; // 최대 그래프 바 영역 높이 (px)
+
+    // 전체 요일 중 가장 감정 기록이 많은 요일의 총 건수 계산
+    const maxWeekdayTotal = Math.max(1, ...buckets.map(b =>
+      MOOD_ORDER.reduce((acc, m) => acc + (b[m] || 0), 0)
+    ));
+
+    // 주간(보통 1건)은 12px, 월간(최대 4~6건)은 36px 내에 꼭 맞도록 unit 자동 계산
+    const unit = Math.max(3, Math.min(12, Math.floor(maxBarHeight / maxWeekdayTotal)));
 
     container.innerHTML = buckets.map((bucket, i) => {
       const segments = MOOD_ORDER
         .filter(mood => bucket[mood])
-        .map(mood => `<div class="chart-bar-seg" style="height:${bucket[mood] * unit}px; background:${MOOD_COLOR_MAP[mood]};" title="${MOOD_LABEL_MAP[mood]} ${bucket[mood]}건"></div>`)
+        .map(mood => {
+          const segHeight = Math.max(3, bucket[mood] * unit);
+          return `<div class="chart-bar-seg" style="height:${segHeight}px; background:${MOOD_COLOR_MAP[mood]};" title="${MOOD_LABEL_MAP[mood]} ${bucket[mood]}건"></div>`;
+        })
         .join('');
 
       let dayClass = '';
